@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.Toast
 import kotlin.math.abs
@@ -136,13 +137,20 @@ class OverlayView @JvmOverloads constructor(
     /** 点击：点到人 → 锁定为主体；再点同一人或点空白 → 解除 */
     @Suppress("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = event.x
                 touchDownY = event.y
+                pinched = false
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                // 刚捏合完的抬手不是点按，不触发锁定
+                if (pinched) {
+                    pinched = false
+                    return true
+                }
                 val moved = hypot(
                     (event.x - touchDownX).toDouble(),
                     (event.y - touchDownY).toDouble(),
@@ -167,6 +175,20 @@ class OverlayView @JvmOverloads constructor(
 
     private var touchDownX = 0f
     private var touchDownY = 0f
+
+    /** 捏合缩放：把缩放系数交给 MainActivity 去调 cameraControl */
+    var onPinchZoom: ((scaleFactor: Float) -> Unit)? = null
+    private var pinched = false
+    private val scaleDetector = ScaleGestureDetector(
+        context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                pinched = true
+                onPinchZoom?.invoke(detector.scaleFactor)
+                return true
+            }
+        },
+    )
 
     // 水平仪在 ±这个角度以内视为「已水平」，变绿
     private val levelToleranceDeg = 1.5f

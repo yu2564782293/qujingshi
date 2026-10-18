@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black">
@@ -7,7 +8,8 @@
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        app:scaleType="fillCenter" />
 
     <!-- 构图辅助层：三分线 + 水平仪，之后的姿势虚线也画在这里 -->
     <com.qujingshi.aicamera.OverlayView
@@ -28,6 +30,62 @@
         android:textColor="#FFFFFF"
         android:textSize="14sp"
         android:visibility="gone" />
+
+    <!-- 变焦条：快捷倍率＋当前倍率显示；预览上双指捏合也能缩放 -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="196dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/zoom1x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:background="#40000000"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="8dp"
+            android:text="1×"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/zoom2x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:background="#40000000"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="8dp"
+            android:text="2×"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/zoom3x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:background="#40000000"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="8dp"
+            android:text="3×"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/txtZoomRatio"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#40000000"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="8dp"
+            android:text="1.0×"
+            android:textColor="#FFC107"
+            android:textSize="15sp" />
+    </LinearLayout>
 
     <ImageButton
         android:id="@+id/btnShutter"

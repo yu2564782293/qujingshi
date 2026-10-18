@@ -23,14 +23,17 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.ZoomState
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -46,6 +49,24 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var imageCapture: ImageCapture? = null
     private var imageAnalysis: ImageAnalysis? = null
     private var lensFacing = CameraSelector.LENS_FACING_BACK
+    private var camera: Camera? = null
+
+    // ── 变焦 ──
+    private lateinit var txtZoomRatio: TextView
+    private lateinit var zoom1x: TextView
+    private lateinit var zoom2x: TextView
+    private lateinit var zoom3x: TextView
+    private var minZoom = 1f
+    private var maxZoom = 1f
+    private val zoomStateObserver = Observer<ZoomState> { zs ->
+        minZoom = zs.minZoomRatio
+        maxZoom = zs.maxZoomRatio
+        txtZoomRatio.text = "%.1f×".format(zs.zoomRatio)
+        // 超出设备最大倍率的快捷按钮直接隐藏
+        zoom2x.visibility = if (maxZoom >= 1.9f) View.VISIBLE else View.GONE
+        zoom3x.visibility = if (maxZoom >= 2.9f) View.VISIBLE else View.GONE
+        highlightZoomPreset(zs.zoomRatio)
+    }
 
     /** 目前荧幕方向（0/90/180/270），给水平仪补偿与 targetRotation 用 */
     private var displayRotationDeg = 0
@@ -116,6 +137,24 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
         findViewById<ImageButton>(R.id.btnPose).setOnClickListener { cyclePose() }
         findViewById<ImageButton>(R.id.btnGuideMode).setOnClickListener { toggleGuideMode() }
+
+        // 变焦：快捷倍率＋捏合缩放（OverlayView 把双指捏合的系数交过来）
+        txtZoomRatio = findViewById(R.id.txtZoomRatio)
+        zoom1x = findViewById(R.id.zoom1x)
+        zoom2x = findViewById(R.id.zoom2x)
+        zoom3x = findViewById(R.id.zoom3x)
+        zoom1x.setOnClickListener { setZoom(1f) }
+        zoom2x.setOnClickListener { setZoom(2f) }
+        zoom3x.setOnClickListener { setZoom(3f) }
+        overlayView.onPinchZoom = { factor ->
+            val cam = camera
+            val zs = cam?.cameraInfo?.zoomState?.value
+            if (cam != null && zs != null) {
+                cam.cameraControl.setZoomRatio(
+                    (zs.zoomRatio * factor).coerceIn(zs.minZoomRatio, zs.maxZoomRatio),
+                )
+            }
+        }
 
         // 圆形缩图
         btnGallery.outlineProvider = object : ViewOutlineProvider() {
@@ -272,8 +311,29 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val capture = imageCapture!!
 
             provider.unbindAll()
-            provider.bindToLifecycle(this, selector, preview, capture, analysis)
+            camera?.cameraInfo?.zoomState?.removeObserver(zoomStateObserver)
+            val cam = provider.bindToLifecycle(this, selector, preview, capture, analysis)
+            camera = cam
+            // 换镜头后倍率归 1，重新订阅这颗镜头的变焦范围
+            cam.cameraControl.setZoomRatio(1f)
+            cam.cameraInfo.zoomState.observe(this, zoomStateObserver)
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun setZoom(ratio: Float) {
+        camera?.cameraControl?.setZoomRatio(ratio.coerceIn(minZoom, maxZoom))
+    }
+
+    /** 高亮当前最接近的快捷倍率 */
+    private fun highlightZoomPreset(current: Float) {
+        val presets = listOf(zoom1x to 1f, zoom2x to 2f, zoom3x to 3f)
+        for ((view, ratio) in presets) {
+            val active = kotlin.math.abs(current - ratio) < 0.05f
+            view.setTextColor(
+                if (active) android.graphics.Color.rgb(255, 193, 7)
+                else android.graphics.Color.WHITE,
+            )
+        }
     }
 
     private fun cyclePose() {
