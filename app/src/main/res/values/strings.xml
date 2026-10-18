@@ -21,16 +21,6 @@
     <string name="advice_good">构图 ✓</string>
     <string name="msg_subject_locked">已锁定主体（再点一下解除）</string>
     <string name="msg_subject_unlocked">已解除锁定</string>
-    <string name="btn_color">切换色彩风格</string>
-    <string name="color_auto">自动</string>
-    <string name="color_ai">AI 调色</string>
-    <string name="color_portrait">人像</string>
-    <string name="color_landscape">风景</string>
-    <string name="color_food">食物</string>
-    <string name="color_night">夜景</string>
-    <string name="color_mono">黑白</string>
-    <string name="color_off">原色</string>
-    <string name="color_auto_prefix">自动・</string>
     <string name="ai_score_fmt">AI 美感 %.1f</string>
     <string name="ai_dir_left">・往左移一点更好</string>
     <string name="ai_dir_right">・往右移一点更好</string>
@@ -41,7 +31,4 @@
     <string name="btn_guide_mode">切换引导模式</string>
     <string name="guide_mode_camera">移镜头模式：人不必动，跟着箭头调整取景</string>
     <string name="guide_mode_subject">移人模式：取景不动，请人走进虚线里</string>
-    <string name="msg_color_unsupported">此设备不支持实时色彩，已停用色彩功能</string>
-    <string name="msg_color_preview_only">此设备拍照不支持色彩效果：预览有色、成品为原色</string>
-    <string name="msg_color_pipeline_error">实时色彩管线出错，已停用</string>
 </resources>

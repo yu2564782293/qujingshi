@@ -23,15 +23,12 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
-import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.media3.effect.Media3Effect
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
@@ -66,36 +63,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private var latestPhotoUri: Uri? = null
 
-    // ── 色彩风格 ──
-    private lateinit var txtColorName: TextView
-    private var media3Effect: Media3Effect? = null
-    private var colorSupported = true       // 绑定失败会降级成 false，并明确告知使用者
-    private var colorMode = ColorMode.AUTO
-    private var appliedLook = ColorMode.OFF   // AUTO 模式下实际套用的风格
-    private var candidateLook: ColorMode? = null
-    private var lookStreak = 0
-
-    @Volatile
-    private var lastLuma = 0.5f
-
-    @Volatile
-    private var lastStats: FrameStats? = null
-    private var appliedStats: FrameStats? = null
-    private var adaptCounter = 0
-
-    // ── AI 取景建议（NIMA）＋ AI 调色（adaptive 3D LUT）──
+    // ── AI 取景建议（L2）＋ 语音指导 ──
     private lateinit var txtAiScore: TextView
     private var framingAdvisor: FramingAdvisor? = null
-    private var lutEngine: LutColorEngine? = null
-    private var lastLutWeights: FloatArray? = null
-    private var lutBusy = false
+    private var voiceGuide: VoiceGuide? = null
+    private var lastDirection: FramingAdvisor.Direction? = null
     private var aiExecutor: ExecutorService? = null
     private var aiBusy = false
     private val aiHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val aiTick = object : Runnable {
         override fun run() {
             scoreCurrentFraming()
-            updateAiColor()
             aiHandler.postDelayed(this, 2000)
         }
     }
@@ -148,10 +126,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         btnGallery.clipToOutline = true
         btnGallery.setOnClickListener { openLatestPhoto() }
 
-        txtColorName = findViewById(R.id.txtColorName)
-        findViewById<ImageButton>(R.id.btnColor).setOnClickListener { cycleColorMode() }
-        updateColorLabel()
-
         analysisExecutor = Executors.newSingleThreadExecutor()
         poseAnalyzer = PoseAnalyzer(
             this,
@@ -159,25 +133,19 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 runOnUiThread {
                     latestPersonsNorm = landmarks
                     overlayView.setDetectedPose(landmarks, imgW, imgH)
-                    updateAutoLook(landmarks.isNotEmpty())
-                    maybeReadapt()
                 }
-            },
-            onStats = {
-                lastStats = it
-                lastLuma = it.luma
             },
         )
 
-        // AI 取景建议：模型载入失败（例如 assets 缺档）就整组停用，App 照常运作
+        // AI 取景建议：模型载入失败（例如 assets 缺档）就停用，App 照常运作
         txtAiScore = findViewById(R.id.txtAiScore)
         runCatching { AestheticScorer(this) }.onSuccess { scorer ->
             framingAdvisor = FramingAdvisor(scorer)
         }
-        lutEngine = runCatching { LutColorEngine(this) }.getOrNull()
-        if (framingAdvisor != null || lutEngine != null) {
+        if (framingAdvisor != null) {
             aiExecutor = Executors.newSingleThreadExecutor()
         }
+        voiceGuide = VoiceGuide(this)
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -199,7 +167,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         accelerometer?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
-        if (framingAdvisor != null || lutEngine != null) aiHandler.postDelayed(aiTick, 2000)
+        if (framingAdvisor != null) aiHandler.postDelayed(aiTick, 2000)
     }
 
     /** 转向由 configChanges 自己接手：更新各 use case 的 targetRotation 与水平仪补偿 */
@@ -233,7 +201,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         poseAnalyzer?.close()
         analysisExecutor.shutdown()
         aiExecutor?.shutdown()
-        lutEngine?.close()
+        voiceGuide?.shutdown()
     }
 
     /** 每 2 秒抓最新影格，背景算美感分数与取景建议（L2：场景路由+密集候选+NIMA 重排） */
@@ -251,8 +219,30 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     txtAiScore.text =
                         getString(R.string.ai_score_fmt).format(result.bestScore) +
                         getString(result.direction.textRes)
+                    // AI 推荐取景框画出来：需要动时加亮＋箭头，稍好时淡淡地提示
+                    overlayView.setAiFramingBox(
+                        result.bestBox,
+                        result.direction != FramingAdvisor.Direction.STAY,
+                        frame.width,
+                        frame.height,
+                    )
+                    speakDirection(result.direction)
                 }
             }
+        }
+    }
+
+    /** 方向变了才"说"，同一个方向不重复播报（VoiceGuide 内还有 2.5 秒间隔保护） */
+    private fun speakDirection(direction: FramingAdvisor.Direction) {
+        if (direction == lastDirection) return
+        lastDirection = direction
+        when (direction) {
+            FramingAdvisor.Direction.LEFT -> voiceGuide?.speak("往左移一点")
+            FramingAdvisor.Direction.RIGHT -> voiceGuide?.speak("往右移一点")
+            FramingAdvisor.Direction.UP -> voiceGuide?.speak("把镜头抬高一点")
+            FramingAdvisor.Direction.DOWN -> voiceGuide?.speak("把镜头放低一点")
+            FramingAdvisor.Direction.CLOSER -> voiceGuide?.speak("靠近一点")
+            FramingAdvisor.Direction.STAY -> voiceGuide?.speak("可以拍了")
         }
     }
 
@@ -281,166 +271,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
             val capture = imageCapture!!
 
-            fun bindWithEffect(targets: Int): Boolean {
-                val effect = runCatching {
-                    Media3Effect(this, targets, ContextCompat.getMainExecutor(this)) {
-                        runOnUiThread { onColorPipelineError() }
-                    }
-                }.getOrNull() ?: return false
-                return runCatching {
-                    provider.unbindAll()
-                    val group = UseCaseGroup.Builder()
-                        .addUseCase(preview).addUseCase(capture).addUseCase(analysis)
-                        .addEffect(effect)
-                        .build()
-                    provider.bindToLifecycle(this, selector, group)
-                }.onSuccess { media3Effect = effect }.isSuccess
-            }
-
-            // 分级降级：预览＋拍照都有色彩 → 只有预览有 → 完全没有（都要让使用者知道）
-            var bound = false
-            if (colorSupported) {
-                bound = bindWithEffect(CameraEffect.PREVIEW or CameraEffect.IMAGE_CAPTURE)
-                if (!bound && bindWithEffect(CameraEffect.PREVIEW)) {
-                    bound = true
-                    Toast.makeText(this, R.string.msg_color_preview_only, Toast.LENGTH_LONG).show()
-                }
-            }
-            if (!bound) {
-                provider.unbindAll()
-                provider.bindToLifecycle(this, selector, preview, capture, analysis)
-                if (colorSupported) disableColor(R.string.msg_color_unsupported)
-            } else {
-                // 重新绑定后 effect 是新实例，把目前的色彩状态套回去
-                when {
-                    colorMode == ColorMode.AI -> {
-                        lastLutWeights = null
-                        updateAiColor()
-                    }
-                    appliedLook != ColorMode.OFF -> applyLook(appliedLook)
-                }
-            }
+            provider.unbindAll()
+            provider.bindToLifecycle(this, selector, preview, capture, analysis)
         }, ContextCompat.getMainExecutor(this))
-    }
-
-    private fun onColorPipelineError() {
-        if (colorSupported) disableColor(R.string.msg_color_pipeline_error)
-    }
-
-    private fun disableColor(msgRes: Int) {
-        colorSupported = false
-        media3Effect = null
-        findViewById<ImageButton>(R.id.btnColor).visibility = View.GONE
-        txtColorName.visibility = View.GONE
-        Toast.makeText(this, msgRes, Toast.LENGTH_LONG).show()
-    }
-
-    // ── 色彩风格 ──
-
-    private fun cycleColorMode() {
-        val modes = ColorMode.entries
-        var next = modes[(colorMode.ordinal + 1) % modes.size]
-        // 引擎没载成功就跳过 AI 调色
-        if (next == ColorMode.AI && lutEngine == null) {
-            next = modes[(next.ordinal + 1) % modes.size]
-        }
-        colorMode = next
-        candidateLook = null
-        lookStreak = 0
-        when (colorMode) {
-            ColorMode.AUTO -> appliedLook = ColorMode.OFF // 让下一帧的自动判断立刻重套
-            ColorMode.AI -> {
-                appliedLook = ColorMode.AI
-                lastLutWeights = null // 强制重新预测
-                updateAiColor()
-            }
-            else -> applyLook(colorMode)
-        }
-        updateColorLabel()
-    }
-
-    /** AI 调色：预测这一幕的 LUT 权重，权重明显变了才重建并套用 LUT */
-    private fun updateAiColor() {
-        if (colorMode != ColorMode.AI) return
-        val engine = lutEngine ?: return
-        val frame = poseAnalyzer?.latestFrame ?: return
-        if (lutBusy) return
-        lutBusy = true
-        aiExecutor?.execute {
-            val built = runCatching {
-                val w = engine.predictWeights(frame)
-                val old = lastLutWeights
-                val changed = old == null ||
-                    kotlin.math.abs(w[0] - old[0]) > 0.05f ||
-                    kotlin.math.abs(w[1] - old[1]) > 0.05f ||
-                    kotlin.math.abs(w[2] - old[2]) > 0.05f
-                if (changed) w to engine.buildCube(w) else null
-            }.getOrNull()
-            runOnUiThread {
-                lutBusy = false
-                if (built != null && colorMode == ColorMode.AI) {
-                    lastLutWeights = built.first
-                    media3Effect?.setEffects(
-                        listOf(
-                            androidx.media3.effect.SingleColorLut.createFromCube(built.second),
-                        ),
-                    )
-                }
-            }
-        }
-    }
-
-    /** AUTO 模式：暗 → 夜景；有人 → 人像；否则风景。连续 30 帧（约 1–2 秒）才切换，避免跳动。 */
-    private fun updateAutoLook(personsPresent: Boolean) {
-        if (colorMode != ColorMode.AUTO) return
-        val target = when {
-            lastLuma < 0.22f -> ColorMode.NIGHT
-            personsPresent -> ColorMode.PORTRAIT
-            else -> ColorMode.LANDSCAPE
-        }
-        if (target == appliedLook) {
-            candidateLook = null
-            lookStreak = 0
-            return
-        }
-        if (target == candidateLook) lookStreak++ else { candidateLook = target; lookStreak = 1 }
-        if (lookStreak >= 30) {
-            applyLook(target)
-            updateColorLabel()
-        }
-    }
-
-    private fun applyLook(look: ColorMode) {
-        appliedLook = look
-        appliedStats = lastStats
-        media3Effect?.setEffects(ColorLooks.effectsFor(look, lastStats))
-    }
-
-    /**
-     * 统计自适应的重套：画面色彩「本质」变了（换场景、光线变化）才重算强度，
-     * 每 60 帧（约 2–4 秒）最多检查一次，微小变化不动作，避免预览闪烁。
-     */
-    private fun maybeReadapt() {
-        if (colorMode == ColorMode.AI) return
-        if (appliedLook == ColorMode.OFF || media3Effect == null) return
-        if (++adaptCounter < 60) return
-        adaptCounter = 0
-        val now = lastStats ?: return
-        val old = appliedStats
-        val changed = old == null ||
-            kotlin.math.abs(now.saturation - old.saturation) > 0.06f ||
-            kotlin.math.abs(now.contrast - old.contrast) > 0.04f ||
-            kotlin.math.abs(now.warmth - old.warmth) > 0.04f ||
-            kotlin.math.abs(now.luma - old.luma) > 0.08f
-        if (changed) applyLook(appliedLook)
-    }
-
-    private fun updateColorLabel() {
-        txtColorName.text = if (colorMode == ColorMode.AUTO) {
-            getString(R.string.color_auto_prefix) + getString(appliedLook.nameRes)
-        } else {
-            getString(colorMode.nameRes)
-        }
     }
 
     private fun cyclePose() {

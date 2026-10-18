@@ -49,10 +49,6 @@ dependencies {
     // 姿势侦测（on-device，模型档在 assets/pose_landmarker_lite.task）
     implementation("com.google.mediapipe:tasks-vision:0.10.14")
 
-    // 色彩风格：CameraX + Media3 GPU 效果，同一组效果套在预览与拍照输出
-    implementation("androidx.camera.media3:media3-effect:1.0.0-alpha04")
-    implementation("androidx.media3:media3-effect:1.6.0")
-
     // NIMA 美学评分模型（assets/nima_aesthetic.tflite）
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

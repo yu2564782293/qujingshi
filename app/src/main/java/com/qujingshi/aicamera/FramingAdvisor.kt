@@ -25,7 +25,12 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
         STAY(R.string.ai_dir_stay),
     }
 
-    data class Result(val currentScore: Float, val bestScore: Float, val direction: Direction)
+    data class Result(
+        val currentScore: Float,
+        val bestScore: Float,
+        val direction: Direction,
+        val bestBox: android.graphics.RectF, // 最佳候选框（正规化坐标，相对整帧）
+    )
 
     private val router = SceneRouter()
     private var lastLandscapeMs = 0L
@@ -74,7 +79,7 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
         // 要赢过现状一个看得出来的差距才建议，避免噪声来回跳
         val dir = if (bestScore - currentScore >= MIN_GAIN) directionFor(bestBox)
         else Direction.STAY
-        return Result(currentScore, bestScore, dir)
+        return Result(currentScore, bestScore, dir, bestBox)
     }
 
     private fun directionFor(box: RectF): Direction {

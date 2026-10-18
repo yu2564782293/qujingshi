@@ -65,6 +65,43 @@ class OverlayView @JvmOverloads constructor(
     private val advisor = CompositionAdvisor()
     private var advice: CompositionAdvisor.Advice? = null
 
+    /** AI 推荐取景框（view 坐标）；null = 不画 */
+    private var aiBoxView: RectF? = null
+    private var aiBoxStrong: Boolean = false
+
+    /**
+     * AI 取景建议的框（正规化坐标，相对整帧）。与全帧几乎重合时不画，避免无信息量。
+     * strong=true 时加亮并从画面中心画箭头指向推荐框。
+     */
+    fun setAiFramingBox(boxNorm: RectF?, strong: Boolean, imgW: Int, imgH: Int) {
+        aiBoxView = if (boxNorm == null || imgW <= 0 || imgH <= 0) {
+            null
+        } else {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0 || h <= 0) {
+                null
+            } else if (boxNorm.width() > 0.95f && boxNorm.height() > 0.95f &&
+                abs(boxNorm.centerX() - 0.5f) < 0.03f && abs(boxNorm.centerY() - 0.5f) < 0.03f
+            ) {
+                null
+            } else {
+                // 与 setDetectedPose 同一套 FILL_CENTER 映射
+                val scale = max(w / imgW, h / imgH)
+                val dx = (w - imgW * scale) / 2f
+                val dy = (h - imgH * scale) / 2f
+                RectF(
+                    boxNorm.left * imgW * scale + dx,
+                    boxNorm.top * imgH * scale + dy,
+                    boxNorm.right * imgW * scale + dx,
+                    boxNorm.bottom * imgH * scale + dy,
+                )
+            }
+        }
+        aiBoxStrong = strong && aiBoxView != null
+        invalidate()
+    }
+
     /**
      * MediaPipe 结果进来：把正规化座标映到 view 座标（PreviewView 预设 FILL_CENTER
      * 置中裁切，这里用同一套缩放），交给 SubjectTracker 判定主体后喂构图规则引擎。
@@ -210,6 +247,20 @@ class OverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    private val aiBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(150, 255, 193, 7)
+        strokeWidth = 5f
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(26f, 18f), 0f)
+    }
+
+    private val aiBoxStrongPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(235, 255, 193, 7)
+        strokeWidth = 8f
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(26f, 18f), 0f)
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
@@ -220,6 +271,7 @@ class OverlayView @JvmOverloads constructor(
         val personBox = drawDetectedSkeleton(canvas)
         drawGhostPose(canvas, w, h, personBox)
         drawAdvice(canvas, w, h)
+        drawAiBox(canvas, w, h)
         drawLevelIndicator(canvas, w, h)
     }
 
@@ -385,6 +437,15 @@ class OverlayView @JvmOverloads constructor(
         )
         path.close()
         canvas.drawPath(path, arrowHeadPaint)
+    }
+
+    /** AI 推荐取景框：虚线框标出"这样拍更好"的位置，需要动时从中心画箭头指过去 */
+    private fun drawAiBox(canvas: Canvas, w: Float, h: Float) {
+        val b = aiBoxView ?: return
+        canvas.drawRoundRect(b, 18f, 18f, if (aiBoxStrong) aiBoxStrongPaint else aiBoxPaint)
+        if (aiBoxStrong) {
+            drawArrow(canvas, w / 2f, h / 2f, b.centerX(), b.centerY())
+        }
     }
 
     private fun drawLevelIndicator(canvas: Canvas, w: Float, h: Float) {
