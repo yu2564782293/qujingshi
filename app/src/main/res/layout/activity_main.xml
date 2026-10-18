@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 构图辅助层：三分线 + 水平仪，之后的姿势虚线也画在这里 -->
+    <com.qujingshi.aicamera.OverlayView
+        android:id="@+id/overlayView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- AI 美感分数与取景建议（NIMA），每 2 秒更新 -->
+    <TextView
+        android:id="@+id/txtAiScore"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="132dp"
+        android:background="#40000000"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/btnShutter"
+        android:layout_width="76dp"
+        android:layout_height="76dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="36dp"
+        android:background="@drawable/bg_shutter"
+        android:contentDescription="@string/btn_shutter" />
+
+    <!-- 图库缩图：显示最新一张照片，点了直接开启 -->
+    <ImageButton
+        android:id="@+id/btnGallery"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="32dp"
+        android:layout_marginBottom="48dp"
+        android:background="#33FFFFFF"
+        android:contentDescription="@string/btn_gallery"
+        android:scaleType="centerCrop" />
+
+    <!-- 色彩风格切换：自动 → 人像 → 风景 → 食物 → 夜景 → 黑白 → 原色 -->
+    <ImageButton
+        android:id="@+id/btnColor"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="48dp"
+        android:background="#40000000"
+        android:contentDescription="@string/btn_color"
+        android:src="@drawable/ic_color" />
+
+    <TextView
+        android:id="@+id/txtColorName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="104dp"
+        android:background="#40000000"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="4dp"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp" />
+
+    <!-- 姿势引导切换：关 → 依序轮播内建姿势 -->
+    <ImageButton
+        android:id="@+id/btnPose"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="48dp"
+        android:layout_marginEnd="24dp"
+        android:background="#40000000"
+        android:contentDescription="@string/btn_pose"
+        android:src="@drawable/ic_pose" />
+
+    <!-- 引导模式切换：移镜头（虚线跟人）↔ 移人（虚线标出最佳位置） -->
+    <ImageButton
+        android:id="@+id/btnGuideMode"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="108dp"
+        android:layout_marginEnd="24dp"
+        android:background="#40000000"
+        android:contentDescription="@string/btn_guide_mode"
+        android:src="@drawable/ic_guide_mode" />
+
+    <TextView
+        android:id="@+id/txtPoseName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="56dp"
+        android:background="#40000000"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/btnSwitchCamera"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="48dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="@string/btn_switch_camera"
+        android:src="@drawable/ic_switch_camera" />
+
+</FrameLayout>

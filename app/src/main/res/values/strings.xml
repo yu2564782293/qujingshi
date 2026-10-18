@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">取景师</string>
+    <string name="btn_shutter">拍照</string>
+    <string name="btn_switch_camera">切换前后镜头</string>
+    <string name="msg_saved">已保存 ✓</string>
+    <string name="msg_save_failed">保存失败</string>
+    <string name="msg_need_camera_permission">需要相机权限才能使用，请到系统设置开启</string>
+    <string name="btn_gallery">打开最新照片</string>
+    <string name="btn_pose">切换姿势引导</string>
+    <string name="pose_off">姿势引导：关</string>
+    <string name="pose_stand">自然站姿</string>
+    <string name="pose_hand_on_hip">单手叉腰</string>
+    <string name="pose_arms_up">双手比V</string>
+    <string name="pose_lean">侧身斜倚</string>
+    <string name="advice_head_cut">别切到头——退后一点或把镜头抬高</string>
+    <string name="advice_leg_cut">切在小腿不好看——退后把脚拍进来，或走近拍半身</string>
+    <string name="advice_move_to_third">把人带到三分线上</string>
+    <string name="advice_headroom">头顶空白有点多——把镜头放低一点</string>
+    <string name="advice_eye_line">眼睛对到上三分线会更好看</string>
+    <string name="advice_good">构图 ✓</string>
+    <string name="msg_subject_locked">已锁定主体（再点一下解除）</string>
+    <string name="msg_subject_unlocked">已解除锁定</string>
+    <string name="btn_color">切换色彩风格</string>
+    <string name="color_auto">自动</string>
+    <string name="color_ai">AI 调色</string>
+    <string name="color_portrait">人像</string>
+    <string name="color_landscape">风景</string>
+    <string name="color_food">食物</string>
+    <string name="color_night">夜景</string>
+    <string name="color_mono">黑白</string>
+    <string name="color_off">原色</string>
+    <string name="color_auto_prefix">自动・</string>
+    <string name="ai_score_fmt">AI 美感 %.1f</string>
+    <string name="ai_dir_left">・往左移一点更好</string>
+    <string name="ai_dir_right">・往右移一点更好</string>
+    <string name="ai_dir_up">・镜头抬高一点更好</string>
+    <string name="ai_dir_down">・镜头放低一点更好</string>
+    <string name="ai_dir_closer">・靠近一点更好</string>
+    <string name="ai_dir_stay"> ✓</string>
+    <string name="btn_guide_mode">切换引导模式</string>
+    <string name="guide_mode_camera">移镜头模式：人不必动，跟着箭头调整取景</string>
+    <string name="guide_mode_subject">移人模式：取景不动，请人走进虚线里</string>
+    <string name="msg_color_unsupported">此设备不支持实时色彩，已停用色彩功能</string>
+    <string name="msg_color_preview_only">此设备拍照不支持色彩效果：预览有色、成品为原色</string>
+    <string name="msg_color_pipeline_error">实时色彩管线出错，已停用</string>
+</resources>

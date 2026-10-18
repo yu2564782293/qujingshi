@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 人形＋双向箭头：切换「移人／移镜」引导模式 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,4c1.1,0 2,0.9 2,2s-0.9,2 -2,2 -2,-0.9 -2,-2 0.9,-2 2,-2zM14,20v-5h1.5v-4c0,-1.1 -0.9,-2 -2,-2h-3c-1.1,0 -2,0.9 -2,2v4H10v5h4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,11l3,-2.5v1.75h1.5v1.5H7v1.75zM20,11l-3,-2.5v1.75h-1.5v1.5H17v1.75z" />
+</vector>
