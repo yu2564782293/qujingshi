@@ -20,10 +20,7 @@ import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 class PoseAnalyzer(
     context: Context,
     private val onResult: (persons: List<List<FloatArray>>, imageWidth: Int, imageHeight: Int) -> Unit,
-    private val onStats: (FrameStats) -> Unit = {},
 ) : ImageAnalysis.Analyzer {
-
-    private var frameCount = 0
 
     /** 前镜头要镜像，让座标跟预览画面一致；由 MainActivity 依镜头方向设定 */
     @Volatile
@@ -63,11 +60,6 @@ class PoseAnalyzer(
             val raw = Bitmap.createBitmap(proxy.width, proxy.height, Bitmap.Config.ARGB_8888)
             raw.copyPixelsFromBuffer(proxy.planes[0].buffer)
 
-            // 每 15 帧抽样一次色彩统计，给夜景自动判断与色彩自适应用
-            if (frameCount++ % 15 == 0) {
-                onStats(sampleStats(raw))
-            }
-
             val matrix = Matrix().apply {
                 postRotate(proxy.imageInfo.rotationDegrees.toFloat())
                 if (mirror) postScale(-1f, 1f, proxy.width / 2f, proxy.height / 2f)
@@ -77,47 +69,6 @@ class PoseAnalyzer(
 
             landmarker.detectAsync(BitmapImageBuilder(upright).build(), SystemClock.uptimeMillis())
         }
-    }
-
-    /** 抽样算亮度、饱和度、对比（亮度标准差）、色温偏向（R−B） */
-    private fun sampleStats(bitmap: Bitmap): FrameStats {
-        var n = 0
-        var sumL = 0f
-        var sumL2 = 0f
-        var sumSat = 0f
-        var sumR = 0L
-        var sumB = 0L
-        val stepX = (bitmap.width / 20).coerceAtLeast(1)
-        val stepY = (bitmap.height / 20).coerceAtLeast(1)
-        var y = 0
-        while (y < bitmap.height) {
-            var x = 0
-            while (x < bitmap.width) {
-                val c = bitmap.getPixel(x, y)
-                val r = c shr 16 and 0xFF
-                val g = c shr 8 and 0xFF
-                val b = c and 0xFF
-                val l = (r + g + b) / (3f * 255f)
-                sumL += l
-                sumL2 += l * l
-                val mx = maxOf(r, g, b)
-                if (mx > 0) sumSat += (mx - minOf(r, g, b)).toFloat() / mx
-                sumR += r
-                sumB += b
-                n++
-                x += stepX
-            }
-            y += stepY
-        }
-        if (n == 0) return FrameStats(0.5f, 0.3f, 0.15f, 0f)
-        val avgL = sumL / n
-        val variance = (sumL2 / n - avgL * avgL).coerceAtLeast(0f)
-        return FrameStats(
-            luma = avgL,
-            saturation = sumSat / n,
-            contrast = kotlin.math.sqrt(variance),
-            warmth = (sumR - sumB).toFloat() / n / 255f,
-        )
     }
 
     fun close() = landmarker.close()
