@@ -53,6 +53,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     /** 目前荧幕方向（0/90/180/270），给水平仪补偿与 targetRotation 用 */
     private var displayRotationDeg = 0
 
+    /** 最近一张取景帧对应的人体关键点（正规化坐标），给 AI 取景（L2 密集候选）用 */
+    @Volatile
+    var latestPersonsNorm: List<List<FloatArray>> = emptyList()
+        private set
+
     private lateinit var analysisExecutor: ExecutorService
     private var poseAnalyzer: PoseAnalyzer? = null
 
@@ -152,6 +157,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             this,
             onResult = { landmarks, imgW, imgH ->
                 runOnUiThread {
+                    latestPersonsNorm = landmarks
                     overlayView.setDetectedPose(landmarks, imgW, imgH)
                     updateAutoLook(landmarks.isNotEmpty())
                     maybeReadapt()
@@ -230,20 +236,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         lutEngine?.close()
     }
 
-    /** 每 2 秒抓最新影格，背景算美感分数与取景建议 */
+    /** 每 2 秒抓最新影格，背景算美感分数与取景建议（L2：场景路由+密集候选+NIMA 重排） */
     private fun scoreCurrentFraming() {
         val advisor = framingAdvisor ?: return
         val frame = poseAnalyzer?.latestFrame ?: return
         if (aiBusy) return
         aiBusy = true
         aiExecutor?.execute {
-            val result = runCatching { advisor.analyze(frame) }.getOrNull()
+            val result = runCatching { advisor.analyze(frame, latestPersonsNorm) }.getOrNull()
             runOnUiThread {
                 aiBusy = false
                 if (result != null) {
                     txtAiScore.visibility = android.view.View.VISIBLE
                     txtAiScore.text =
-                        getString(R.string.ai_score_fmt).format(result.currentScore) +
+                        getString(R.string.ai_score_fmt).format(result.bestScore) +
                         getString(result.direction.textRes)
                 }
             }
