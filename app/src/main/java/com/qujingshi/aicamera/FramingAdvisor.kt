@@ -7,12 +7,13 @@ import androidx.annotation.StringRes
 import kotlin.math.abs
 
 /**
- * L2 AI 取景：场景路由 → 密集候选框 → 几何快筛 Top3 → NIMA 重排。
+ * AI 取景：场景路由 → 密集候选框 → 几何构图分全量打分 → Top5 →
+ * NIMA 美学分 → 双路归一化融合（各 50%）选最优。
  *
- * 相对 v0.5 的 6 个固定框：人像/合影用主体锚定的 ~19 个候选（主体落在九宫格各点位），
- * 风景用 3x3 网格。NIMA 推理预算不变（人像 4 次/轮，风景 11 次/3 秒一轮）。
- * 规则引擎（CompositionAdvisor）继续负责每帧的即时硬伤纠错，这里只回答
- * "附近有没有明显更好的取景"。
+ * 取自 GAIC 论文思想：最终取景质量 = 美学 × 几何构图 × 内容保留。
+ * 几何分不再是"海选过滤器"，而是和 NIMA 平起平坐共同决赛——
+ * 纯 NIMA 容易选出几何别扭（地平线居中、主体贴边）的高饱和裁剪。
+ * 风景场景有地平线检测（亮度梯度最大行），无人时几何分由地平线三分主导。
  */
 class FramingAdvisor(private val scorer: AestheticScorer) {
 
@@ -26,10 +27,11 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
     }
 
     data class Result(
-        val currentScore: Float,
-        val bestScore: Float,
+        val currentScore: Float, // NIMA 当前全帧分（1~10，展示用）
+        val bestScore: Float,    // NIMA 最佳框分（1~10，展示用）
         val direction: Direction,
-        val bestBox: android.graphics.RectF, // 最佳候选框（正规化坐标，相对整帧）
+        val bestBox: RectF,      // 最佳候选框（正规化坐标，相对整帧）
+        val blendGain: Float,    // 融合分提升（0~1，自动变焦/裁剪的决策依据）
     )
 
     private val router = SceneRouter()
@@ -59,28 +61,75 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
 
         val boxes = CandidateGenerator.generate(scene, subjectBoxes)
         val baseline = boxes[0]
-        // 快筛：风景无几何可用，直接全量 NIMA；人像/合影先几何取 Top3
-        val shortlist = if (scene == SceneType.LANDSCAPE) {
-            boxes.drop(1)
-        } else {
-            boxes.drop(1).sortedByDescending { BoxScorer.score(it, persons, scene) }.take(3)
-        }
+        val horizonY = if (scene == SceneType.LANDSCAPE) detectHorizon(frame) else null
 
-        val currentScore = scorer.score(frame)
-        var bestBox: RectF = baseline
-        var bestScore = currentScore
-        for (b in shortlist) {
-            val s = scorer.score(cropNorm(frame, b))
-            if (s > bestScore) {
-                bestScore = s
-                bestBox = b
+        // 几何分全量打分（微秒级），取 Top5 进决赛
+        val geoAll = boxes.map { BoxScorer.score(it, persons, scene, horizonY) }
+        val ranked = boxes.drop(1)
+            .mapIndexed { i, b -> b to geoAll[i + 1] }
+            .sortedByDescending { it.second }
+            .take(SHORTLIST)
+
+        // NIMA：baseline + Top5（风景从 11 次降到 6 次，人像从 4 次升到 6 次）
+        val nimaBase = scorer.score(frame)
+        val nimaRank = ranked.map { (b, _) -> scorer.score(cropNorm(frame, b)) }
+
+        // 双路归一化后融合：NIMA 1~10 → 0~1 绝对尺度，几何分本来就是 0~1。
+        // 不用 min-max——它会把噪声级差异放大成满权重；绝对尺度下，
+        // 区分度小的信号自动让位给区分度大的信号。
+        val baseFinal = 0.5f * geoAll[0] + 0.5f * nimaNorm(nimaBase)
+        var bestIdx = -1
+        var bestFinal = baseFinal
+        for (i in ranked.indices) {
+            val f = 0.5f * ranked[i].second + 0.5f * nimaNorm(nimaRank[i])
+            if (f > bestFinal) {
+                bestFinal = f
+                bestIdx = i
             }
         }
-        // 要赢过现状一个看得出来的差距才建议，避免噪声来回跳
-        val dir = if (bestScore - currentScore >= MIN_GAIN) directionFor(bestBox)
-        else Direction.STAY
-        return Result(currentScore, bestScore, dir, bestBox)
+
+        val bestBox = if (bestIdx >= 0) ranked[bestIdx].first else baseline
+        val bestNima = if (bestIdx >= 0) nimaRank[bestIdx] else nimaBase
+        val gain = bestFinal - baseFinal
+        val dir = if (gain >= MIN_GAIN) directionFor(bestBox) else Direction.STAY
+        return Result(nimaBase, bestNima, dir, bestBox, gain)
     }
+
+    /**
+     * 地平线检测：24x24 采样算每行平均亮度，取 25%~75% 行之间亮度梯度最大处。
+     * 梯度太弱（室内/纯纹理）返回 null。
+     */
+    private fun detectHorizon(frame: Bitmap): Float? {
+        val w = frame.width
+        val h = frame.height
+        val rows = 24
+        val cols = 24
+        val luma = FloatArray(rows)
+        for (r in 0 until rows) {
+            val y = ((r + 0.5f) / rows * h).toInt().coerceIn(0, h - 1)
+            var sum = 0f
+            for (c in 0 until cols) {
+                val x = ((c + 0.5f) / cols * w).toInt().coerceIn(0, w - 1)
+                val p = frame.getPixel(x, y)
+                sum += (p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)
+            }
+            luma[r] = sum / cols / (3f * 255f)
+        }
+        var best = -1
+        var bestG = 0f
+        for (r in 6 until rows - 6) {
+            val g = abs(luma[r + 1] - luma[r - 1])
+            if (g > bestG) {
+                bestG = g
+                best = r
+            }
+        }
+        if (best < 0 || bestG < 0.05f) return null
+        return (best + 0.5f) / rows
+    }
+
+    /** NIMA 1~10 → 0~1 绝对尺度 */
+    private fun nimaNorm(s: Float) = ((s - 1f) / 9f).coerceIn(0f, 1f)
 
     private fun directionFor(box: RectF): Direction {
         val dx = box.centerX() - 0.5f
@@ -118,7 +167,8 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
     }
 
     private companion object {
-        const val MIN_GAIN = 0.08f // 自动取景要"敢动"，阈值放低；抖动由平滑趋近吸收
+        const val MIN_GAIN = 0.08f // 融合分（0~1）要赢过现状才动手
+        const val SHORTLIST = 5 // 几何 Top5 进 NIMA 决赛
         const val DIR_T = 0.04f
         const val MIN_SUBJECT_H = 0.08f // 与 SubjectTracker 的远景主体门槛一致
         const val LANDSCAPE_INTERVAL_MS = 3000L

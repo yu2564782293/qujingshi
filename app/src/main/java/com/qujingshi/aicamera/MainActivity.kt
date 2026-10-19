@@ -307,7 +307,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
      */
     private fun maybeAutoZoom(result: FramingAdvisor.Result) {
         if (SystemClock.uptimeMillis() - lastManualZoomMs < MANUAL_ZOOM_HOLD_MS) return
-        if (result.bestScore - result.currentScore < AUTO_ZOOM_MIN_GAIN) return
+        if (result.blendGain < AUTO_ZOOM_MIN_GAIN) return
         val box = result.bestBox
         val scale = max(box.width(), box.height())
         if (scale >= 0.88f) return

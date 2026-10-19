@@ -2,57 +2,90 @@ package com.qujingshi.aicamera
 
 import android.graphics.RectF
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.min
 
 /**
- * 几何快筛：把主体关键点映射到候选框局部坐标，用构图几何特征打分（0~1），微秒级。
- * 用于从十几个候选中挑出 Top3，再交给 NIMA 重排——NIMA 推理预算与原来持平。
+ * 构图几何打分（0~1），微秒级。
  *
- * 几何量测与 CompositionAdvisor 同源（阈值均为相对值）：切头否决、三分距离、
- * 头顶留白、主体大小、眼睛线、切小腿惩罚。
+ * 设计取自 GAIC 论文思想：最终取景 = 美学分 × 几何构图分 × 内容保留，
+ * 几何分不再只是"海选过滤器"，而是和 NIMA 做归一化融合后共同决赛。
+ *
+ * 人像/合影：三分（群体重心）0.30 ＋ 头顶留白 0.15 ＋ 主体大小 0.15 ＋
+ *   眼睛线 0.15 ＋ 脸部三分点 0.15 ＋ 边缘余量 0.10；
+ *   切脸/切头否决，切肩/切小腿打折。
+ * 风景（无主体）：地平线三分 placement；无明显地平线时中性 0.5，交给 NIMA。
+ *
+ * @param box 候选框（正规化坐标）
+ * @param subjects 每人 33 点 [x, y, visibility]（相对整帧的正规化坐标）
+ * @param horizonY 风景地平线（相对整帧的正规化 y），null = 测不到/不适用
  */
 object BoxScorer {
 
-    /**
-     * @param box 候选框（正规化坐标）
-     * @param subjects 每人 33 点 [x, y, visibility]（相对整帧的正规化坐标）
-     */
-    fun score(box: RectF, subjects: List<List<FloatArray>>, scene: SceneType): Float {
-        if (subjects.isEmpty()) return 0.5f
+    fun score(
+        box: RectF,
+        subjects: List<List<FloatArray>>,
+        scene: SceneType,
+        horizonY: Float? = null,
+    ): Float {
+        if (subjects.isEmpty()) return landscapeScore(box, horizonY)
+
         val bw = box.width().coerceAtLeast(1e-6f)
         val bh = box.height().coerceAtLeast(1e-6f)
         val local = subjects.map { person ->
             person.map { floatArrayOf((it[0] - box.left) / bw, (it[1] - box.top) / bh, it[2]) }
         }
 
-        // 任一主体切头 → 直接否决（不要切头的取景）
+        // 内容保留：切脸/切头直接否决
+        if (local.any { noseOut(it) }) return 0.02f
         if (local.any { headTop(it) < 0.015f }) return 0.02f
 
         var score = 0f
-        // 三分：群体重心（单人即本人）到最近锚点的距离
+        // 三分：群体重心（单人即本人）到最近 x 锚点的距离
         val gcx = local.map { centerX(it) }.average().toFloat()
         val dThirds = floatArrayOf(1f / 3f, 0.5f, 2f / 3f).minOf { abs(gcx - it) }
-        score += 0.40f * (1f - min(dThirds / 0.25f, 1f))
+        score += 0.30f * (1f - min(dThirds / 0.25f, 1f))
         // 头顶留白：最高头顶超过 30% 画面高开始扣分
         val top = local.minOf { headTop(it) }
-        score += 0.20f * (1f - min(maxOf(0f, top - 0.30f) / 0.20f, 1f))
+        score += 0.15f * (1f - min(maxOf(0f, top - 0.30f) / 0.20f, 1f))
         // 主体大小：框内身高 0.45~0.75 最佳
         val h = local.map { subjectHeight(it) }.average().toFloat()
-        score += 0.20f * (1f - min(distToInterval(h, 0.45f, 0.75f) / 0.30f, 1f))
+        score += 0.15f * (1f - min(distToInterval(h, 0.45f, 0.75f) / 0.30f, 1f))
         // 眼睛线（仅单人且主体够大时）：眼睛贴上三分线；否则中性分
-        // （与 CompositionAdvisor 一致：小主体不苛求眼睛线）
         val eyeOk = if (local.size == 1 && h > 0.5f) {
             1f - min(abs(eyeY(local[0]) - 1f / 3f) / 0.12f, 1f)
         } else {
             0.5f
         }
-        score += 0.20f * eyeOk
-        // 切在小腿：打七折
+        score += 0.15f * eyeOk
+        // 脸部三分点：鼻尖到最近的上三分点交点的距离（合影取脸群重心）
+        val fx = local.map { it[0][0] }.average().toFloat()
+        val fy = local.map { it[0][1] }.average().toFloat()
+        val dFace = min(
+            hypot(fx - 1f / 3f, fy - 1f / 3f),
+            hypot(fx - 2f / 3f, fy - 1f / 3f),
+        )
+        score += 0.15f * (1f - min(dFace / 0.28f, 1f))
+        // 边缘余量：主体离框边太近显局促，理想余量 0.05~0.20
+        score += 0.10f * (1f - min(distToInterval(edgeMargin(local), 0.05f, 0.20f) / 0.15f, 1f))
+
+        // 切肩（斩首感）：打五折；切小腿：打七折
+        if (local.any { shoulderOut(it) }) score *= 0.5f
         if (local.any { kneeIn(it) && ankleOut(it) }) score *= 0.7f
         return score.coerceIn(0f, 1f)
     }
 
-    // ── 以下几何量测与 CompositionAdvisor.Subject 同逻辑（框局部坐标，框高=1）──
+    /** 风景：地平线落在三分线上最好；框里没地平线（纯细节）就中性，交给 NIMA。 */
+    private fun landscapeScore(box: RectF, horizonY: Float?): Float {
+        if (horizonY == null) return 0.5f
+        val bh = box.height().coerceAtLeast(1e-6f)
+        val lh = (horizonY - box.top) / bh
+        if (lh < 0.02f || lh > 0.98f) return 0.45f
+        val d = min(abs(lh - 1f / 3f), abs(lh - 2f / 3f))
+        return (1f - min(d / 0.22f, 1f)).coerceIn(0f, 1f)
+    }
+
+    // ── 以下几何量测（框局部坐标，框高=1）──
 
     private fun headTop(pts: List<FloatArray>): Float {
         val headWidth = abs(pts[7][0] - pts[8][0]).coerceAtLeast(0.02f)
@@ -63,9 +96,32 @@ object BoxScorer {
 
     private fun inBox(p: FloatArray) = p[2] > 0.5f && p[0] in 0f..1f && p[1] in 0f..1f
 
+    /** 鼻尖不在框内 = 切脸，否决 */
+    private fun noseOut(pts: List<FloatArray>) = !inBox(pts[0])
+
+    /** 肩膀出框 = 斩首式裁剪，重罚 */
+    private fun shoulderOut(pts: List<FloatArray>) = !inBox(pts[11]) || !inBox(pts[12])
+
     private fun kneeIn(pts: List<FloatArray>) = inBox(pts[25]) || inBox(pts[26])
 
     private fun ankleOut(pts: List<FloatArray>) = !inBox(pts[27]) && !inBox(pts[28])
+
+    /** 主体整体外框到候选框边的最小距离（局部坐标） */
+    private fun edgeMargin(local: List<List<FloatArray>>): Float {
+        var l = 1f
+        var t = 1f
+        var r = 0f
+        var b = 0f
+        for (pts in local) {
+            for (p in pts) {
+                if (p[2] <= 0.5f) continue
+                l = minOf(l, p[0]); t = minOf(t, p[1])
+                r = maxOf(r, p[0]); b = maxOf(b, p[1])
+            }
+        }
+        if (r <= l) return 0f
+        return maxOf(0f, min(min(l, t), min(1f - r, 1f - b)))
+    }
 
     private fun centerX(pts: List<FloatArray>) =
         (pts[11][0] + pts[12][0] + pts[23][0] + pts[24][0]) / 4f
