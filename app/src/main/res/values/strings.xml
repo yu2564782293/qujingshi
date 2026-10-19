@@ -34,4 +34,13 @@
     <string name="ai_framing_on">AI 取景・开</string>
     <string name="ai_framing_off">AI 取景・关</string>
     <string name="msg_ai_cropped">已按 AI 构图裁剪</string>
+    <string name="reframe_title">AI 重构图</string>
+    <string name="reframe_analyzing">AI 正在找最好看的部分…</string>
+    <string name="reframe_score_fmt">AI 推荐构图・美感 %.1f</string>
+    <string name="reframe_good_already">这张已经很好了，不用裁</string>
+    <string name="reframe_failed">分析失败，换一张试试</string>
+    <string name="reframe_saving">正在保存…</string>
+    <string name="reframe_saved">已保存到相册</string>
+    <string name="reframe_pick">换一张</string>
+    <string name="reframe_save">保存裁剪</string>
 </resources>

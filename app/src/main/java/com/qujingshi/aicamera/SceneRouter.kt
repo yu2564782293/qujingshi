@@ -15,9 +15,20 @@ class SceneRouter {
     private var pending: SceneType? = null
     private var streak = 0
 
+    /** 单张照片（相册重构图）：直接按人数定场景，无需防抖 */
+    fun decideNow(subjectCount: Int): SceneType {
+        current = when {
+            subjectCount >= 2 -> SceneType.GROUP
+            subjectCount == 1 -> SceneType.PORTRAIT
+            else -> SceneType.LANDSCAPE
+        }
+        pending = null
+        streak = 0
+        return current
+    }
+
     /** 连续 2 次评估同场景才切换，避免人物进出画面时来回跳 */
-    fun update(subjectCount: Int): SceneType {
-        val target = when {
+    fun update(subjectCount: Int): SceneType {        val target = when {
             subjectCount >= 2 -> SceneType.GROUP
             subjectCount == 1 -> SceneType.PORTRAIT
             else -> SceneType.LANDSCAPE

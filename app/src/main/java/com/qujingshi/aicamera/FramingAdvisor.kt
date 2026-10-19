@@ -40,9 +40,14 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
     /**
      * 在背景线程调用。
      * @param subjectsNorm 每人 33 点 [x, y, visibility]（相对整帧的正规化坐标，与 frame 对应）
+     * @param singleShot 单张照片模式（相册重构图）：场景直接定、不做风景节流
      * @return null = 本轮跳过（风景场景节流）或无法评估
      */
-    fun analyze(frame: Bitmap, subjectsNorm: List<List<FloatArray>>): Result? {
+    fun analyze(
+        frame: Bitmap,
+        subjectsNorm: List<List<FloatArray>>,
+        singleShot: Boolean = false,
+    ): Result? {
         val w = frame.width
         val h = frame.height
         if (w <= 0 || h <= 0) return null
@@ -52,11 +57,16 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
             .map { bboxNorm(it) }
             .filter { it.height() >= MIN_SUBJECT_H }
 
-        val scene = router.update(subjectBoxes.size)
-        if (scene == SceneType.LANDSCAPE) {
-            val now = SystemClock.uptimeMillis()
-            if (now - lastLandscapeMs < LANDSCAPE_INTERVAL_MS) return null
-            lastLandscapeMs = now
+        val scene = if (singleShot) {
+            router.decideNow(subjectBoxes.size)
+        } else {
+            val s = router.update(subjectBoxes.size)
+            if (s == SceneType.LANDSCAPE) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastLandscapeMs < LANDSCAPE_INTERVAL_MS) return null
+                lastLandscapeMs = now
+            }
+            s
         }
 
         val boxes = CandidateGenerator.generate(scene, subjectBoxes)

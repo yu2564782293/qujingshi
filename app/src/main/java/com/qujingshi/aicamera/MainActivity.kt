@@ -7,19 +7,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.BitmapRegionDecoder
 import android.graphics.ImageFormat
-import android.graphics.Matrix
 import android.graphics.Outline
-import android.graphics.Rect
 import android.graphics.RectF
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.camera2.CameraCharacteristics
-import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -194,7 +189,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }
         }
         btnGallery.clipToOutline = true
-        btnGallery.setOnClickListener { openLatestPhoto() }
+        // 点缩图 = AI 重构图（看最新照片里哪块最好看）；长按 = 系统看图
+        btnGallery.setOnClickListener { openReframe() }
+        btnGallery.setOnLongClickListener {
+            openLatestPhoto()
+            true
+        }
 
         analysisExecutor = Executors.newSingleThreadExecutor()
         poseAnalyzer = PoseAnalyzer(
@@ -527,86 +527,28 @@ class MainActivity : ComponentActivity(), SensorEventListener {
      */
     private fun applySmartCrop(uri: Uri, box: RectF) {
         aiExecutor?.execute {
-            try {
-                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                    val orientation = ExifInterface(pfd.fileDescriptor)
-                        .getAttributeInt(
-                            ExifInterface.TAG_ORIENTATION,
-                            ExifInterface.ORIENTATION_NORMAL,
-                        )
-                    val decoder =
-                        BitmapRegionDecoder.newInstance(pfd.fileDescriptor, false)
-                            ?: return@execute
-                    val rect = mapBoxToStored(
-                        box, decoder.width, decoder.height, orientation,
-                    )
-                    if (rect.width() < 16 || rect.height() < 16) {
-                        decoder.recycle()
-                        return@execute
-                    }
-                    val cropped = decoder.decodeRegion(
-                        rect, BitmapFactory.Options(),
-                    )
-                    decoder.recycle()
-                    // EXIF 方向：裁剪块是存储方向的像素，必须按 EXIF 转正再存；
-                    // 否则清掉 EXIF 后照片会是横的（之前 bug 就是这里）。
-                    val deg = when (orientation) {
-                        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-                        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-                        else -> 0f
-                    }
-                    val upright = if (deg == 0f) {
-                        cropped
-                    } else {
-                        val m = Matrix()
-                        m.postRotate(deg)
-                        Bitmap.createBitmap(
-                            cropped, 0, 0, cropped.width, cropped.height, m, true,
-                        ).also { cropped.recycle() }
-                    }
-                    contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                        upright.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                    }
-                    upright.recycle()
-                    runOnUiThread {
-                        Toast.makeText(
-                            this, R.string.msg_ai_cropped, Toast.LENGTH_SHORT,
-                        ).show()
-                        showThumbnail(uri)
-                    }
-                } ?: runOnUiThread {
-                    Toast.makeText(this, R.string.msg_saved, Toast.LENGTH_SHORT).show()
-                    showThumbnail(uri)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "smart crop failed, keep original", e)
+            val cropped = ImageCropper.cropUpright(contentResolver, uri, box)
+            if (cropped == null) {
                 runOnUiThread {
                     Toast.makeText(this, R.string.msg_saved, Toast.LENGTH_SHORT).show()
                     showThumbnail(uri)
                 }
+                return@execute
+            }
+            try {
+                contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                    cropped.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "smart crop save failed, keep original", e)
+            } finally {
+                cropped.recycle()
+            }
+            runOnUiThread {
+                Toast.makeText(this, R.string.msg_ai_cropped, Toast.LENGTH_SHORT).show()
+                showThumbnail(uri)
             }
         }
-    }
-
-    /** 正规化坐标（正向画面）→ 存储像素坐标（含 EXIF 旋转映射） */
-    private fun mapBoxToStored(box: RectF, sw: Int, sh: Int, orientation: Int): Rect {
-        val swap = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
-            orientation == ExifInterface.ORIENTATION_ROTATE_270
-        val uw = if (swap) sh else sw
-        val uh = if (swap) sw else sh
-        val l = (box.left * uw).toInt().coerceIn(0, uw)
-        val t = (box.top * uh).toInt().coerceIn(0, uh)
-        val r = (box.right * uw).toInt().coerceIn(0, uw)
-        val b = (box.bottom * uh).toInt().coerceIn(0, uh)
-        val rect = when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_180 -> Rect(sw - r, sh - b, sw - l, sh - t)
-            ExifInterface.ORIENTATION_ROTATE_90 -> Rect(t, sh - r, b, sh - l)
-            ExifInterface.ORIENTATION_ROTATE_270 -> Rect(sw - b, l, sw - t, r)
-            else -> Rect(l, t, r, b)
-        }
-        rect.intersect(0, 0, sw, sh)
-        return rect
     }
 
     /** 开 App 时捞本 App 资料夹里最新一张照片当缩图（重灌后捞不到就留空） */
@@ -634,6 +576,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val thumb = contentResolver.loadThumbnail(uri, Size(128, 128), null)
             btnGallery.setImageBitmap(thumb)
         }
+    }
+
+    private fun openReframe() {
+        startActivity(
+            Intent(this, ReframeActivity::class.java).apply {
+                putExtra("uri", latestPhotoUri)
+            },
+        )
     }
 
     private fun openLatestPhoto() {
