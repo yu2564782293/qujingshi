@@ -82,9 +82,7 @@ class OverlayView @JvmOverloads constructor(
             val h = height.toFloat()
             if (w <= 0 || h <= 0) {
                 null
-            } else if (boxNorm.width() > 0.95f && boxNorm.height() > 0.95f &&
-                abs(boxNorm.centerX() - 0.5f) < 0.03f && abs(boxNorm.centerY() - 0.5f) < 0.03f
-            ) {
+            } else if (!isSignificantBox(boxNorm)) {
                 null
             } else {
                 // 与 setDetectedPose 同一套 FILL_CENTER 映射
@@ -493,8 +491,17 @@ class OverlayView @JvmOverloads constructor(
         }
     }
 
-    private companion object {
+    companion object {
         const val ARROW_SPREAD = 0.5f // 弧度，箭头开角的一半
+
+        /**
+         * 推荐框是否"值得一画/值得一裁"：几乎就是全帧时没信息量。
+         * MainActivity 的拍照智能裁剪也用同一个判断。
+         */
+        fun isSignificantBox(box: RectF): Boolean {
+            return !(box.width() > 0.95f && box.height() > 0.95f &&
+                abs(box.centerX() - 0.5f) < 0.03f && abs(box.centerY() - 0.5f) < 0.03f)
+        }
 
         /** MediaPipe 33 点模型的躯干＋四肢连线（脸部细节不画） */
         val BODY_EDGES = listOf(

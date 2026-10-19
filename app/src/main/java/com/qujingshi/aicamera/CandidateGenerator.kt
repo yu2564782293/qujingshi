@@ -16,7 +16,13 @@ import kotlin.math.hypot
 object CandidateGenerator {
 
     private val ANCHORS = floatArrayOf(1f / 3f, 0.5f, 2f / 3f)
-    private val SCALES = floatArrayOf(0.86f, 0.72f)
+
+    /**
+     * 四档缩放：0.86/0.72 微调，0.60/0.50 拉近看细节——
+     * AI 自动取景要"把最好看的地方放大"，候选里必须有够紧的框。
+     * 候选变多了，但几何快筛只取 Top3，NIMA 推理量不变。
+     */
+    private val SCALES = floatArrayOf(0.86f, 0.72f, 0.60f, 0.50f)
 
     /**
      * @param subjects 主体 bbox（正规化坐标），已按高度过滤。
@@ -32,6 +38,7 @@ object CandidateGenerator {
                     }
                 }
                 addBox(out, 0.5f, 0.5f, 0.72f) // closer
+                addBox(out, 0.5f, 0.5f, 0.58f) // 拉近看细节
             }
             SceneType.PORTRAIT, SceneType.GROUP -> {
                 if (subjects.isEmpty()) return out

@@ -108,6 +108,20 @@
         android:contentDescription="@string/btn_gallery"
         android:scaleType="centerCrop" />
 
+    <!-- AI 自动取景开关：开 = AI 自己变焦＋拍照自动裁成最好构图 -->
+    <TextView
+        android:id="@+id/btnAiFraming"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="48dp"
+        android:background="#40000000"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp"
+        android:text="@string/ai_framing_on"
+        android:textSize="14sp" />
+
     <!-- 姿势引导切换：关 → 依序轮播内建姿势 -->
     <ImageButton
         android:id="@+id/btnPose"

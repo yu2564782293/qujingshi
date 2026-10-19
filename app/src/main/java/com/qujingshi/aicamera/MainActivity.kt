@@ -6,14 +6,22 @@ import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Outline
+import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import android.util.Size
 import android.view.Surface
 import android.view.View
@@ -23,6 +31,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -38,7 +47,9 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.max
 
 class MainActivity : ComponentActivity(), SensorEventListener {
 
@@ -89,6 +100,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var framingAdvisor: FramingAdvisor? = null
     private var voiceGuide: VoiceGuide? = null
     private var lastDirection: FramingAdvisor.Direction? = null
+
+    // ── AI 自动取景：自己变焦＋拍照自动裁成最好构图 ──
+    private var autoFraming = true
+    private lateinit var btnAiFraming: TextView
+    private var lastBestBox: RectF? = null
+    private var lastManualZoomMs = 0L
     private var aiExecutor: ExecutorService? = null
     private var aiBusy = false
     private val aiHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -138,6 +155,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         findViewById<ImageButton>(R.id.btnPose).setOnClickListener { cyclePose() }
         findViewById<ImageButton>(R.id.btnGuideMode).setOnClickListener { toggleGuideMode() }
 
+        // AI 自动取景开关（左上）：开 = AI 自己变焦＋拍照自动裁成最好构图
+        btnAiFraming = findViewById(R.id.btnAiFraming)
+        btnAiFraming.setOnClickListener {
+            autoFraming = !autoFraming
+            updateAiFramingLabel()
+        }
+        updateAiFramingLabel()
+
         // 变焦：快捷倍率＋捏合缩放（OverlayView 把双指捏合的系数交过来）
         txtZoomRatio = findViewById(R.id.txtZoomRatio)
         zoom1x = findViewById(R.id.zoom1x)
@@ -147,6 +172,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         zoom2x.setOnClickListener { setZoom(2f) }
         zoom3x.setOnClickListener { setZoom(3f) }
         overlayView.onPinchZoom = { factor ->
+            lastManualZoomMs = SystemClock.uptimeMillis()
             val cam = camera
             val zs = cam?.cameraInfo?.zoomState?.value
             if (cam != null && zs != null) {
@@ -258,17 +284,39 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     txtAiScore.text =
                         getString(R.string.ai_score_fmt).format(result.bestScore) +
                         getString(result.direction.textRes)
-                    // AI 推荐取景框画出来：需要动时加亮＋箭头，稍好时淡淡地提示
+                    lastBestBox = result.bestBox
+                    // 自动取景开：推荐框有意义就一直高亮（它会真的动手）；关：只在需要动时高亮
+                    val significant = OverlayView.isSignificantBox(result.bestBox)
                     overlayView.setAiFramingBox(
                         result.bestBox,
-                        result.direction != FramingAdvisor.Direction.STAY,
+                        strong = if (autoFraming) significant
+                        else result.direction != FramingAdvisor.Direction.STAY,
                         frame.width,
                         frame.height,
                     )
+                    if (autoFraming) maybeAutoZoom(result)
                     speakDirection(result.direction)
                 }
             }
         }
+    }
+
+    /**
+     * 自动变焦：推荐框在画面中央附近、且明显小于当前取景时，自己拉近。
+     * 每次只走 45% 的路程，平滑趋近；用户刚手动捏合过 4 秒内不动手。
+     */
+    private fun maybeAutoZoom(result: FramingAdvisor.Result) {
+        if (SystemClock.uptimeMillis() - lastManualZoomMs < MANUAL_ZOOM_HOLD_MS) return
+        if (result.bestScore - result.currentScore < AUTO_ZOOM_MIN_GAIN) return
+        val box = result.bestBox
+        val scale = max(box.width(), box.height())
+        if (scale >= 0.88f) return
+        if (abs(box.centerX() - 0.5f) > 0.15f || abs(box.centerY() - 0.5f) > 0.15f) return
+        val cam = camera ?: return
+        val zs = cam.cameraInfo.zoomState.value ?: return
+        val target = (zs.zoomRatio / scale).coerceIn(zs.minZoomRatio, zs.maxZoomRatio)
+        if (target - zs.zoomRatio < 0.05f) return
+        cam.cameraControl.setZoomRatio(zs.zoomRatio + (target - zs.zoomRatio) * 0.45f)
     }
 
     /** 方向变了才"说"，同一个方向不重复播报（VoiceGuide 内还有 2.5 秒间隔保护） */
@@ -294,10 +342,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 it.surfaceProvider = previewView.surfaceProvider
             }
             imageCapture = ImageCapture.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .build()
 
             val analysis = ImageAnalysis.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
@@ -321,7 +371,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     private fun setZoom(ratio: Float) {
+        lastManualZoomMs = SystemClock.uptimeMillis()
         camera?.cameraControl?.setZoomRatio(ratio.coerceIn(minZoom, maxZoom))
+    }
+
+    private fun updateAiFramingLabel() {
+        btnAiFraming.setText(
+            if (autoFraming) R.string.ai_framing_on else R.string.ai_framing_off,
+        )
+        btnAiFraming.setTextColor(
+            if (autoFraming) android.graphics.Color.rgb(255, 193, 7)
+            else android.graphics.Color.rgb(160, 160, 160),
+        )
     }
 
     /** 高亮当前最接近的快捷倍率 */
@@ -399,8 +460,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
-                    Toast.makeText(this@MainActivity, R.string.msg_saved, Toast.LENGTH_SHORT).show()
-                    result.savedUri?.let { showThumbnail(it) }
+                    val uri = result.savedUri
+                    val box = lastBestBox
+                    // AI 自动取景开：直接把照片裁成 AI 选的最好构图
+                    if (autoFraming && uri != null && box != null &&
+                        OverlayView.isSignificantBox(box)
+                    ) {
+                        applySmartCrop(uri, box)
+                    } else {
+                        Toast.makeText(this@MainActivity, R.string.msg_saved, Toast.LENGTH_SHORT)
+                            .show()
+                        uri?.let { showThumbnail(it) }
+                    }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -409,6 +480,79 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 }
             },
         )
+    }
+
+    /**
+     * 智能裁剪：只解码 AI 框那块区域（BitmapRegionDecoder，不整图解码省内存），
+     * 按 EXIF 方向把正规化坐标映射到存储像素，裁完直接写回原文件。
+     * 分析帧和拍照都统一 16:9，同一变焦下视野一致，坐标可直接缩放映射。
+     */
+    private fun applySmartCrop(uri: Uri, box: RectF) {
+        aiExecutor?.execute {
+            try {
+                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    val orientation = ExifInterface(pfd.fileDescriptor)
+                        .getAttributeInt(
+                            ExifInterface.TAG_ORIENTATION,
+                            ExifInterface.ORIENTATION_NORMAL,
+                        )
+                    val decoder =
+                        BitmapRegionDecoder.newInstance(pfd.fileDescriptor, false)
+                            ?: return@execute
+                    val rect = mapBoxToStored(
+                        box, decoder.width, decoder.height, orientation,
+                    )
+                    if (rect.width() < 16 || rect.height() < 16) {
+                        decoder.recycle()
+                        return@execute
+                    }
+                    val cropped = decoder.decodeRegion(
+                        rect, BitmapFactory.Options(),
+                    )
+                    decoder.recycle()
+                    contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        cropped.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    cropped.recycle()
+                    // 裁后像素已是正向，EXIF 被清空即方向正常
+                    runOnUiThread {
+                        Toast.makeText(
+                            this, R.string.msg_ai_cropped, Toast.LENGTH_SHORT,
+                        ).show()
+                        showThumbnail(uri)
+                    }
+                } ?: runOnUiThread {
+                    Toast.makeText(this, R.string.msg_saved, Toast.LENGTH_SHORT).show()
+                    showThumbnail(uri)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "smart crop failed, keep original", e)
+                runOnUiThread {
+                    Toast.makeText(this, R.string.msg_saved, Toast.LENGTH_SHORT).show()
+                    showThumbnail(uri)
+                }
+            }
+        }
+    }
+
+    /** 正规化坐标（正向画面）→ 存储像素坐标（含 EXIF 旋转映射） */
+    private fun mapBoxToStored(box: RectF, sw: Int, sh: Int, orientation: Int): Rect {
+        val swap = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
+            orientation == ExifInterface.ORIENTATION_ROTATE_270
+        val uw = if (swap) sh else sw
+        val uh = if (swap) sw else sh
+        val l = (box.left * uw).toInt().coerceIn(0, uw)
+        val t = (box.top * uh).toInt().coerceIn(0, uh)
+        val r = (box.right * uw).toInt().coerceIn(0, uw)
+        val b = (box.bottom * uh).toInt().coerceIn(0, uh)
+        val rect = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_180 -> Rect(sw - r, sh - b, sw - l, sh - t)
+            ExifInterface.ORIENTATION_ROTATE_90 -> Rect(t, sh - r, b, sh - l)
+            ExifInterface.ORIENTATION_ROTATE_270 -> Rect(sw - b, l, sw - t, r)
+            else -> Rect(l, t, r, b)
+        }
+        rect.intersect(0, 0, sw, sh)
+        return rect
     }
 
     /** 开 App 时捞本 App 资料夹里最新一张照片当缩图（重灌后捞不到就留空） */
@@ -462,4 +606,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    private companion object {
+        const val TAG = "Qujingshi"
+        /** 用户手动变焦后这么久内，自动变焦不动手 */
+        const val MANUAL_ZOOM_HOLD_MS = 4000L
+        /** 自动变焦也要"赢得明显"才动手 */
+        const val AUTO_ZOOM_MIN_GAIN = 0.08f
+    }
 }

@@ -31,4 +31,7 @@
     <string name="btn_guide_mode">切换引导模式</string>
     <string name="guide_mode_camera">移镜头模式：人不必动，跟着箭头调整取景</string>
     <string name="guide_mode_subject">移人模式：取景不动，请人走进虚线里</string>
+    <string name="ai_framing_on">AI 取景・开</string>
+    <string name="ai_framing_off">AI 取景・关</string>
+    <string name="msg_ai_cropped">已按 AI 构图裁剪</string>
 </resources>

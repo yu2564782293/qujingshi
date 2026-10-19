@@ -118,7 +118,7 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
     }
 
     private companion object {
-        const val MIN_GAIN = 0.12f
+        const val MIN_GAIN = 0.08f // 自动取景要"敢动"，阈值放低；抖动由平滑趋近吸收
         const val DIR_T = 0.04f
         const val MIN_SUBJECT_H = 0.08f // 与 SubjectTracker 的远景主体门槛一致
         const val LANDSCAPE_INTERVAL_MS = 3000L
