@@ -27,8 +27,9 @@ object BoxScorer {
         subjects: List<List<FloatArray>>,
         scene: SceneType,
         horizonY: Float? = null,
+        saliency: FloatArray? = null,
     ): Float {
-        if (subjects.isEmpty()) return landscapeScore(box, horizonY)
+        if (subjects.isEmpty()) return landscapeScore(box, horizonY, saliency)
 
         val bw = box.width().coerceAtLeast(1e-6f)
         val bh = box.height().coerceAtLeast(1e-6f)
@@ -75,14 +76,43 @@ object BoxScorer {
         return score.coerceIn(0f, 1f)
     }
 
-    /** 风景：地平线落在三分线上最好；框里没地平线（纯细节）就中性，交给 NIMA。 */
-    private fun landscapeScore(box: RectF, horizonY: Float?): Float {
-        if (horizonY == null) return 0.5f
-        val bh = box.height().coerceAtLeast(1e-6f)
-        val lh = (horizonY - box.top) / bh
-        if (lh < 0.02f || lh > 0.98f) return 0.45f
-        val d = min(abs(lh - 1f / 3f), abs(lh - 2f / 3f))
-        return (1f - min(d / 0.22f, 1f)).coerceIn(0f, 1f)
+    /**
+     * 风景：地平线三分 ＋ 视觉主体（显著性重心）三分，各占一半。
+     * 框里没地平线（纯细节）→ 该路中性；主体被裁出框 → 重罚（内容保留）。
+     */
+    private fun landscapeScore(box: RectF, horizonY: Float?, saliency: FloatArray?): Float {
+        val hScore = if (horizonY == null) {
+            0.5f
+        } else {
+            val bh = box.height().coerceAtLeast(1e-6f)
+            val lh = (horizonY - box.top) / bh
+            if (lh < 0.02f || lh > 0.98f) {
+                0.45f
+            } else {
+                val d = min(abs(lh - 1f / 3f), abs(lh - 2f / 3f))
+                (1f - min(d / 0.22f, 1f)).coerceIn(0f, 1f)
+            }
+        }
+        val sScore = if (saliency == null) {
+            0.5f
+        } else {
+            val bw = box.width().coerceAtLeast(1e-6f)
+            val bh = box.height().coerceAtLeast(1e-6f)
+            val lx = (saliency[0] - box.left) / bw
+            val ly = (saliency[1] - box.top) / bh
+            if (lx < 0f || lx > 1f || ly < 0f || ly > 1f) {
+                0.25f
+            } else {
+                val d = minOf(
+                    hypot(lx - 1f / 3f, ly - 1f / 3f),
+                    hypot(lx - 2f / 3f, ly - 1f / 3f),
+                    hypot(lx - 1f / 3f, ly - 2f / 3f),
+                    hypot(lx - 2f / 3f, ly - 2f / 3f),
+                )
+                (1f - min(d / 0.35f, 1f)).coerceIn(0f, 1f)
+            }
+        }
+        return 0.5f * hScore + 0.5f * sScore
     }
 
     // ── 以下几何量测（框局部坐标，框高=1）──

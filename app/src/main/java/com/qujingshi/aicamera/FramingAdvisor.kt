@@ -62,9 +62,10 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
         val boxes = CandidateGenerator.generate(scene, subjectBoxes)
         val baseline = boxes[0]
         val horizonY = if (scene == SceneType.LANDSCAPE) detectHorizon(frame) else null
+        val saliency = if (scene == SceneType.LANDSCAPE) saliencyCentroid(frame) else null
 
         // 几何分全量打分（微秒级），取 Top5 进决赛
-        val geoAll = boxes.map { BoxScorer.score(it, persons, scene, horizonY) }
+        val geoAll = boxes.map { BoxScorer.score(it, persons, scene, horizonY, saliency) }
         val ranked = boxes.drop(1)
             .mapIndexed { i, b -> b to geoAll[i + 1] }
             .sortedByDescending { it.second }
@@ -126,6 +127,39 @@ class FramingAdvisor(private val scorer: AestheticScorer) {
         }
         if (best < 0 || bestG < 0.05f) return null
         return (best + 0.5f) / rows
+    }
+
+    /**
+     * 显著性重心：24x24 采样，每格按"色度 × (1-亮度)"加权求重心。
+     * 天空（亮、灰）权重低，房子/树（暗、彩）权重高——风景没有人物时，
+     * 用它当"视觉主体"做三分构图。场景太平返回 null。
+     */
+    private fun saliencyCentroid(frame: Bitmap): FloatArray? {
+        val w = frame.width
+        val h = frame.height
+        val rows = 24
+        val cols = 24
+        var sumW = 0f
+        var sumX = 0f
+        var sumY = 0f
+        for (r in 0 until rows) {
+            val y = ((r + 0.5f) / rows * h).toInt().coerceIn(0, h - 1)
+            for (c in 0 until cols) {
+                val x = ((c + 0.5f) / cols * w).toInt().coerceIn(0, w - 1)
+                val p = frame.getPixel(x, y)
+                val rC = p shr 16 and 0xFF
+                val gC = p shr 8 and 0xFF
+                val bC = p and 0xFF
+                val chroma = (maxOf(rC, gC, bC) - minOf(rC, gC, bC)) / 255f
+                val luma = (rC + gC + bC) / (3f * 255f)
+                val wt = chroma * (1f - luma)
+                sumW += wt
+                sumX += wt * (c + 0.5f) / cols
+                sumY += wt * (r + 0.5f) / rows
+            }
+        }
+        if (sumW < 1e-6f) return null
+        return floatArrayOf(sumX / sumW, sumY / sumW)
     }
 
     /** NIMA 1~10 → 0~1 绝对尺度 */

@@ -10,6 +10,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Qujingshi">
         <!-- 转向自己处理（configChanges）：避免旋转时 Activity 重建导致相机重启、设定归零 -->

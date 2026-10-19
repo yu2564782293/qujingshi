@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Rect
@@ -17,6 +18,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.camera2.CameraCharacteristics
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
@@ -32,6 +34,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -106,6 +109,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var autoFraming = true
     private lateinit var btnAiFraming: TextView
     private var lastBestBox: RectF? = null
+    private var lastBlendGain = 0f
     private var lastManualZoomMs = 0L
     private var aiExecutor: ExecutorService? = null
     private var aiBusy = false
@@ -286,6 +290,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         getString(R.string.ai_score_fmt).format(result.bestScore) +
                         getString(result.direction.textRes)
                     lastBestBox = result.bestBox
+                    lastBlendGain = result.blendGain
                     // 自动取景开：推荐框有意义就一直高亮（它会真的动手）；关：只在需要动时高亮
                     val significant = OverlayView.isSignificantBox(result.bestBox)
                     overlayView.setAiFramingBox(
@@ -334,6 +339,30 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
     }
 
+    /**
+     * 查指定镜头支持的最大 16:9 JPEG 尺寸（免绑定，直接读相机特性）。
+     * 拿到就让成片吃满像素；拿不到返回 null，调用方回退到 16:9 宽高比。
+     */
+    private fun maxCaptureSize(
+        provider: ProcessCameraProvider,
+        lensFacing: Int,
+    ): Size? {
+        return try {
+            val info = provider.availableCameraInfos.firstOrNull { it.lensFacing == lensFacing }
+                ?: return null
+            val map = Camera2CameraInfo.from(info).getCameraCharacteristic(
+                CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
+            ) ?: return null
+            map.getOutputSizes(ImageFormat.JPEG)
+                ?.filter { abs(it.width.toFloat() / it.height - 16f / 9f) < 0.02f }
+                ?.maxByOrNull { it.width * it.height }
+                ?.let { Size(it.width, it.height) }
+        } catch (e: Exception) {
+            Log.w(TAG, "query max capture size failed", e)
+            null
+        }
+    }
+
     private fun startCamera() {
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
@@ -342,10 +371,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val preview = Preview.Builder().build().also {
                 it.surfaceProvider = previewView.surfaceProvider
             }
-            imageCapture = ImageCapture.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                .build()
 
             val analysis = ImageAnalysis.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_16_9)
@@ -357,6 +382,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 analyzer.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
                 analysis.setAnalyzer(analysisExecutor, analyzer)
             }
+
+            // 成片吃满像素：查这颗镜头支持的最大 16:9 JPEG 尺寸（X200 主摄 ~37MP）
+            val maxSize = maxCaptureSize(provider, lensFacing)
+            imageCapture = ImageCapture.Builder().apply {
+                if (maxSize != null) {
+                    setTargetResolution(maxSize)
+                } else {
+                    setTargetAspectRatio(AspectRatio.RATIO_16_9)
+                }
+                setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            }.build()
 
             val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
             val capture = imageCapture!!
@@ -463,9 +499,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     val uri = result.savedUri
                     val box = lastBestBox
-                    // AI 自动取景开：直接把照片裁成 AI 选的最好构图
+                    // AI 自动取景开、且这轮 AI 确实赢得明显（和"建议移动"同一门槛），
+                    // 才动用户的照片；赢得不明显就保留全帧，不糟蹋原图
                     if (autoFraming && uri != null && box != null &&
-                        OverlayView.isSignificantBox(box)
+                        OverlayView.isSignificantBox(box) && lastBlendGain >= CROP_MIN_GAIN
                     ) {
                         applySmartCrop(uri, box)
                     } else {
@@ -630,5 +667,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         const val MANUAL_ZOOM_HOLD_MS = 4000L
         /** 自动变焦也要"赢得明显"才动手 */
         const val AUTO_ZOOM_MIN_GAIN = 0.08f
+        /** 智能裁剪门槛：和"建议移动"同一标准，赢得不明显不碰原图 */
+        const val CROP_MIN_GAIN = 0.08f
     }
 }
