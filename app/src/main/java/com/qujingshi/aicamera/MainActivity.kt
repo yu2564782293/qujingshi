@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.RectF
@@ -510,11 +511,27 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         rect, BitmapFactory.Options(),
                     )
                     decoder.recycle()
-                    contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                        cropped.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    // EXIF 方向：裁剪块是存储方向的像素，必须按 EXIF 转正再存；
+                    // 否则清掉 EXIF 后照片会是横的（之前 bug 就是这里）。
+                    val deg = when (orientation) {
+                        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                        else -> 0f
                     }
-                    cropped.recycle()
-                    // 裁后像素已是正向，EXIF 被清空即方向正常
+                    val upright = if (deg == 0f) {
+                        cropped
+                    } else {
+                        val m = Matrix()
+                        m.postRotate(deg)
+                        Bitmap.createBitmap(
+                            cropped, 0, 0, cropped.width, cropped.height, m, true,
+                        ).also { cropped.recycle() }
+                    }
+                    contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        upright.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    upright.recycle()
                     runOnUiThread {
                         Toast.makeText(
                             this, R.string.msg_ai_cropped, Toast.LENGTH_SHORT,
